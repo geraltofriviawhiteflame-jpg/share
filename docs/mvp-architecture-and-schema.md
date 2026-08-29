@@ -245,6 +245,7 @@ Represents a single-use invitation. The recipient must authenticate or create an
 | `accepted_by_user_id` | `TEXT` | Optional foreign key to `users.id` |
 | `accepted_at` | `TEXT` | Optional UTC timestamp |
 | `created_at` | `TEXT` | Required UTC timestamp |
+| `updated_at` | `TEXT` | Required UTC timestamp |
 
 Invitation acceptance must verify that the invitation is pending, has not expired, and is being accepted by the intended normalized email when `invited_email` is present.
 
@@ -474,16 +475,16 @@ Additional recommendations:
 
 ## Initial implementation sequence
 
-1. Establish the Next.js and TypeScript application.
-2. Configure Drizzle, SQLite, migrations, and database test isolation.
-3. Add authentication-owned tables and the `users` integration.
-4. Implement groups, memberships, invitations, and server-side authorization.
-5. Implement expense creation with equal and exact splits.
-6. Implement the derived group-balance query and invariant tests.
+1. Implement and test the relational model as raw, versioned SQLite migrations.
+2. Exercise constraints, balance views, transaction boundaries, and query plans with representative SQL data.
+3. Establish the Next.js and TypeScript application and map the reviewed schema with Drizzle.
+4. Add authentication-owned tables and the `users` integration.
+5. Implement groups, memberships, invitations, and server-side authorization.
+6. Implement transactional expense creation with equal and exact splits.
 7. Implement edits, soft deletion, optimistic concurrency, and activity events.
-8. Implement settlements and suggested transfers.
+8. Implement settlements and deterministic suggested transfers.
 9. Add responsive group, expense, and balance interfaces.
-10. Add persistent deployment, backup, and restoration documentation.
+10. Add persistent deployment, backup, restoration, observability, and scale-evolution documentation.
 
 ## Acceptance criteria for the schema layer
 
@@ -496,4 +497,7 @@ Additional recommendations:
 - Unauthorized edits and settlements are rejected by server-side tests.
 - Every valid group's calculated balances sum to zero.
 - A member who leaves a group remains visible in historical expenses and balance calculations.
+- Invitation acceptance requires an authenticated account and cannot create duplicate membership.
+nt and cannot create duplicate membership.
+es a group remains visible in historical expenses and balance calculations.
 - Invitation acceptance requires an authenticated account and cannot create duplicate membership.
