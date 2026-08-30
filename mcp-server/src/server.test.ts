@@ -9,19 +9,23 @@ import { BalanceService } from "../../src/services/balance";
 import { ExpenseService } from "../../src/services/expenses";
 import { GroupService } from "../../src/services/groups";
 import { SettlementService } from "../../src/services/settlements";
+import { createLogger, silentLogger } from "./log";
 import { createShareMcpServer } from "./server";
 
 async function connect() {
   const database = await openDatabase(":memory:");
   applyMigrations(database, join(__dirname, "..", "..", "db", "migrations"));
-  const server = createShareMcpServer({
-    database,
-    accounts: new AccountService(database),
-    groups: new GroupService(database),
-    expenses: new ExpenseService(database),
-    balances: new BalanceService(database),
-    settlements: new SettlementService(database),
-  });
+  const server = createShareMcpServer(
+    {
+      database,
+      accounts: new AccountService(database),
+      groups: new GroupService(database),
+      expenses: new ExpenseService(database),
+      balances: new BalanceService(database),
+      settlements: new SettlementService(database),
+    },
+    { logger: silentLogger() },
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "share-mcp-test", version: "0.0.0" });
@@ -151,6 +155,74 @@ test("full happy path: user, group, member, expense, balances, settlement", asyn
     assert.equal((textOf(lists[2]) as unknown[]).length, 2); // members
     assert.equal((textOf(lists[3]) as unknown[]).length, 1); // expenses
     assert.equal((textOf(lists[4]) as unknown[]).length, 1); // settlements
+  } finally {
+    await client.close();
+    database.close();
+  }
+});
+
+test("advertises the logging capability", async () => {
+  const { client, database } = await connect();
+  try {
+    const capabilities = client.getServerCapabilities();
+    assert.ok(capabilities?.logging);
+  } finally {
+    await client.close();
+    database.close();
+  }
+});
+
+test("logs tool invocations and domain rejections", async () => {
+  const chunks: string[] = [];
+  const logger = createLogger({
+    name: "share-mcp-server",
+    level: "info",
+    format: "json",
+    stream: { write: (chunk) => chunks.push(String(chunk)) },
+  });
+  const database = await openDatabase(":memory:");
+  applyMigrations(database, join(__dirname, "..", "..", "db", "migrations"));
+  const server = createShareMcpServer(
+    {
+      database,
+      accounts: new AccountService(database),
+      groups: new GroupService(database),
+      expenses: new ExpenseService(database),
+      balances: new BalanceService(database),
+      settlements: new SettlementService(database),
+    },
+    { logger },
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "share-mcp-test", version: "0.0.0" });
+  await client.connect(clientTransport);
+  try {
+    await client.callTool({
+      name: "create_user",
+      arguments: { email: "log@example.com", display_name: "Log" },
+    });
+    await client.callTool({
+      name: "create_user",
+      arguments: { email: "not-an-email", display_name: "Bad" },
+    });
+    const records = chunks.map((line) => JSON.parse(line) as {
+      msg: string;
+      tool?: string;
+      ok?: boolean;
+      kind?: string;
+    });
+    assert.ok(
+      records.some((record) => record.msg === "tool.done" && record.tool === "create_user" && record.ok === true),
+    );
+    assert.ok(
+      records.some(
+        (record) =>
+          record.msg === "tool.rejected" &&
+          record.tool === "create_user" &&
+          record.kind === "validation",
+      ),
+    );
   } finally {
     await client.close();
     database.close();

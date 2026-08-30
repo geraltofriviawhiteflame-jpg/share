@@ -17,13 +17,17 @@ transactional writes, actor checks, balance re-derivation) apply identically.
 npm install           # in this folder (mcp-server/)
 npm run build         # compiles repo src/ + this folder into dist/
 npm test              # in-memory end-to-end tests over the MCP protocol
-node scripts/smoke-stdio.js   # wire-level stdio smoke test against the built server
+npm run smoke         # wire-level stdio smoke test against the built server
 ```
 
 Run the server (stdio is the default transport):
 
 ```bash
-npm start
+npm start             # stdio
+npm run start:http    # streamable HTTP on :8081
+npm run start:sse     # legacy HTTP+SSE
+npm run dev           # tsx watch, stdio
+npm run dev:http      # tsx watch, HTTP
 ```
 
 Point any MCP client at the command `node /path/to/share/mcp-server/dist/mcp-server/src/index.js`
@@ -46,6 +50,20 @@ Environment variables:
 | `HOST`                    | `0.0.0.0`                    | HTTP/SSE bind address                      |
 | `DATABASE_FILE`           | `<repo>/data/mcp-share.db`   | SQLite file; `:memory:` for a throwaway DB |
 | `MIGRATIONS_DIRECTORY`    | `<repo>/db/migrations`       | Override only for testing                  |
+| `LOG_LEVEL`               | `info`                       | `debug`, `info`, `warn`, or `error`        |
+| `LOG_FORMAT`              | pretty on a TTY, else `json` | `json` or `pretty`; always written to stderr |
+
+Logs never go to stdout (stdio JSON-RPC owns that stream). Each line is a
+structured record: server start, database open, HTTP requests, session
+open/close, and every tool call (`tool.done` / `tool.rejected` / `tool.failed`)
+with duration. Set `LOG_LEVEL=debug` to also see tool arguments. The server
+advertises the MCP `logging` capability and forwards the same tool events as
+`notifications/message` to connected clients.
+
+```bash
+LOG_LEVEL=debug npm start                 # verbose stdio
+LOG_LEVEL=info npm run start:http         # streamable HTTP on :8081
+```
 
 The server applies the same SQL migrations as the web backend on startup.
 
@@ -93,7 +111,11 @@ Add to your project's `.mcp.json` (a ready-made one sits in the repository root)
     "share": {
       "command": "node",
       "args": ["mcp-server/dist/mcp-server/src/index.js"],
-      "env": { "MCP_TRANSPORT": "stdio" }
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "LOG_LEVEL": "info",
+        "LOG_FORMAT": "json"
+      }
     }
   }
 }
@@ -135,6 +157,7 @@ MCP client (agent)
    ▼
 mcp-server/src/index.ts        transports + per-session McpServer wiring
 mcp-server/src/server.ts       11 tool definitions (zod schemas + handlers)
+mcp-server/src/log.ts          structured stderr logger (JSON or pretty)
 mcp-server/src/format.ts       snake_case serializers matching the REST API
    │
    ▼  (same service layer as the web app — no duplication)
@@ -157,9 +180,10 @@ npm test
 
 The suite runs a real MCP client/server pair over in-memory transports and
 covers the full happy path (user → group → member → expense → balances →
-settlement), the complete tool inventory, and domain-error surfacing.
+settlement), the complete tool inventory, domain-error surfacing, structured
+logging, and the advertised MCP `logging` capability.
 
-`node scripts/smoke-stdio.js` spawns the *built* server and speaks raw
+`npm run smoke` (or `node scripts/smoke-stdio.js`) spawns the *built* server and speaks raw
 newline-delimited JSON-RPC over stdin/stdout, proving wire compatibility with
 real clients such as Claude Desktop.
 
