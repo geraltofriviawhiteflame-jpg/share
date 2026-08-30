@@ -9,7 +9,7 @@ export const openApiDocument = {
     title: "Share Expense Tracker API",
     version: "0.1.0",
     description:
-      "A learning API for shared expenses, derived balances, and external settlements. Authentication is intentionally the next milestone; the current examples use actor and member IDs.",
+      "A learning API for shared expenses, derived balances, and external settlements. The mobile web client is served from /. Authentication is intentionally the next milestone; the current examples use actor and member IDs.",
   },
   servers: [{ url: "/", description: "Current server" }],
   tags: [
@@ -47,6 +47,22 @@ export const openApiDocument = {
       },
     },
     "/v1/users": {
+      get: {
+        tags: ["Accounts"],
+        summary: "List the people this server knows",
+        description:
+          "Read side of the bootstrap account store. The mobile client uses it to choose who is holding the device and who can be added to a group.",
+        responses: {
+          "200": {
+            description: "Users, ordered by display name",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/User" } },
+              },
+            },
+          },
+        },
+      },
       post: {
         tags: ["Accounts"],
         summary: "Create a temporary local user",
@@ -128,6 +144,25 @@ export const openApiDocument = {
       },
     },
     "/v1/groups/{group_id}/members": {
+      get: {
+        tags: ["Groups"],
+        summary: "List the group roster",
+        description:
+          "Includes members who left, so historical splits stay readable. Sorted active-first, then by display name.",
+        parameters: [{ $ref: "#/components/parameters/GroupId" }],
+        responses: {
+          "200": {
+            description: "Members",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/GroupMember" } },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
       post: {
         tags: ["Groups"],
         summary: "Add or reactivate a member",
@@ -257,6 +292,33 @@ export const openApiDocument = {
       },
     },
     "/v1/groups/{group_id}/settlements": {
+      get: {
+        tags: ["Settlements"],
+        summary: "List recorded settlements",
+        description: "Newest first, active records only. Amounts are integer paise.",
+        parameters: [
+          { $ref: "#/components/parameters/GroupId" },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+            example: 50,
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Settlements",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/Settlement" } },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
       post: {
         tags: ["Settlements"],
         summary: "Record an external settlement",
@@ -405,6 +467,19 @@ export const openApiDocument = {
           member_id: { type: "string" },
           group_id: { type: "string" },
           user_id: { type: "string" },
+          role: { type: "string", enum: ["owner", "admin", "member"] },
+          status: { type: "string", enum: ["active", "left"] },
+        },
+      },
+      GroupMember: {
+        type: "object",
+        description: "A membership joined with the account it points at.",
+        required: ["member_id", "group_id", "user_id", "display_name", "role", "status"],
+        properties: {
+          member_id: { type: "string" },
+          group_id: { type: "string" },
+          user_id: { type: "string" },
+          display_name: { type: "string", example: "Beena" },
           role: { type: "string", enum: ["owner", "admin", "member"] },
           status: { type: "string", enum: ["active", "left"] },
         },

@@ -19,6 +19,34 @@ export class AccountService {
   public constructor(private readonly database: SQLiteDatabase) {}
 
   /**
+   * Read side of the bootstrap account store. A client needs this to choose a
+   * person before authentication exists; once sessions land, the list should
+   * be scoped to connections the actor is allowed to see.
+   */
+  public listUsers(): User[] {
+    const rows = this.database
+      .prepare(`
+        SELECT id, email, display_name, timezone
+        FROM users
+        WHERE deleted_at IS NULL
+        ORDER BY display_name COLLATE NOCASE, id
+      `)
+      .all() as Array<{
+      id: string;
+      email: string;
+      display_name: string;
+      timezone: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      displayName: row.display_name,
+      timezone: row.timezone,
+    }));
+  }
+
+  /**
    * This is a temporary bootstrap operation. Authentication should own account
    * creation once sessions and email verification are introduced.
    */

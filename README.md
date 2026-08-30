@@ -13,6 +13,7 @@ SQLite.
 - [TypeScript backend study guide and interview questions](docs/typescript-backend-study-guide.md)
 - [System design interview study guide](docs/system-design-study-guide.md)
 - [Database learning track](db/README.md)
+- [Mobile web client](docs/mobile-client.md)
 
 ## Database quick start
 
@@ -58,11 +59,36 @@ setup, equal and exact expense splits, balance lookup, and settlements. Use
 **Try it out** to execute requests against the running local server. The raw
 OpenAPI document is available at `http://localhost:8080/openapi.json`.
 
-The initial learning API includes `POST /v1/users`, `POST /v1/groups`,
-`POST /v1/groups/{group_id}/members`,
+The learning API includes `GET/POST /v1/users`, `GET/POST /v1/groups`,
+`GET/POST /v1/groups/{group_id}/members`,
 `GET/POST /v1/groups/{group_id}/expenses`,
 `GET /v1/groups/{group_id}/balances`, and
-`POST /v1/groups/{group_id}/settlements`.
+`GET/POST /v1/groups/{group_id}/settlements`.
+
+## Mobile app
+
+The same server also serves a phone-sized web client at the origin root, with no
+build step and no framework:
+
+```text
+http://localhost:8080/
+```
+
+Open it on a phone (or resize the browser) and you can create a person, start a
+group, add people, record equal or exact expenses, watch balances re-derive from
+the ledger, and settle up. Use **Add to Home Screen** for a standalone window.
+
+To see it populated, seed a demo group through the API:
+
+```bash
+npm run dev          # terminal 1
+npm run db:seed-demo # terminal 2
+```
+
+The client stores which person is holding the device in `localStorage` and sends
+that membership as `actor_member_id`; see
+[mobile client notes](docs/mobile-client.md) for why, and for what it does not
+do yet (no edit, no delete, no leaving a group).
 
 Authentication is intentionally the next milestone. For now, the API accepts
 IDs such as `actor_member_id` to make the domain services executable; these
