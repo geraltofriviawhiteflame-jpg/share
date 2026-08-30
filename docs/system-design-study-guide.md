@@ -70,7 +70,10 @@ Exit criteria:
 
 ## Milestone 2: Transactional domain services
 
-Implement use cases without a web interface first:
+The first TypeScript implementation now provides a runnable starting point for
+the core create/read flows. Authentication, invitations, edits, and optimistic
+concurrency remain intentionally next. Implement the remaining use cases
+without a web interface first:
 
 - create a group and its owner atomically;
 - accept an invitation without duplicate membership;
