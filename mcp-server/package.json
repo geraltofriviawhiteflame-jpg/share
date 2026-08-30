@@ -1,0 +1,24 @@
+{
+  "name": "share-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model Context Protocol server for the Share expense tracker backend",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/mcp-server/src/index.js",
+    "start:http": "node dist/mcp-server/src/index.js",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "sql.js": "^1.14.2",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/sql.js": "^1.4.11",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.2"
+  }
+}
