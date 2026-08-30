@@ -15,10 +15,11 @@ import type {
   SuggestedTransfer,
 } from "../services/balance";
 import type { Expense, Payer, Share } from "../services/expenses";
-import type { Group, Member, MembershipGroup } from "../services/groups";
+import type { Group, Member, MembershipGroup, RosterMember } from "../services/groups";
 import type { Settlement } from "../services/settlements";
 import { DomainError, notFound, validation } from "../domain/errors";
 import { SQLiteDatabase } from "../db/database";
+import { isUiPath, serveUiAsset } from "./ui";
 import { openApiDocument } from "./openapi";
 
 export interface AppDependencies {
@@ -82,9 +83,23 @@ async function handleRequest(
     return writeJson(response, 200, { status: "ok" });
   }
 
+  if (isUiPath(url.pathname)) {
+    if (request.method !== "GET") {
+      return methodNotAllowed(response, "GET");
+    }
+    return serveUiAsset(response, url.pathname);
+  }
+
   if (parts.length === 2 && parts[0] === "v1" && parts[1] === "users") {
+    if (request.method === "GET") {
+      return writeJson(
+        response,
+        200,
+        dependencies.accounts.listUsers().map(serializeUser),
+      );
+    }
     if (request.method !== "POST") {
-      return methodNotAllowed(response, "POST");
+      return methodNotAllowed(response, "GET", "POST");
     }
     const body = await readObject(request);
     const user = dependencies.accounts.createUser({
@@ -134,8 +149,15 @@ async function handleRequest(
   const resource = parts[3];
   switch (resource) {
     case "members": {
+      if (request.method === "GET") {
+        return writeJson(
+          response,
+          200,
+          dependencies.groups.listMembers(groupId).map(serializeRosterMember),
+        );
+      }
       if (request.method !== "POST") {
-        return methodNotAllowed(response, "POST");
+        return methodNotAllowed(response, "GET", "POST");
       }
       const body = await readObject(request);
       const member = dependencies.groups.addMember({
@@ -148,15 +170,10 @@ async function handleRequest(
     }
     case "expenses": {
       if (request.method === "GET") {
-        const rawLimit = url.searchParams.get("limit");
-        const limit = rawLimit === null ? 50 : Number(rawLimit);
-        if (!Number.isInteger(limit)) {
-          return writeError(response, validation("limit must be an integer"));
-        }
         return writeJson(
           response,
           200,
-          dependencies.expenses.list(groupId, limit).map(serializeExpense),
+          dependencies.expenses.list(groupId, queryLimit(url)).map(serializeExpense),
         );
       }
       if (request.method !== "POST") {
@@ -189,8 +206,17 @@ async function handleRequest(
         serializeBalanceResult(dependencies.balances.forGroup(groupId)),
       );
     case "settlements": {
+      if (request.method === "GET") {
+        return writeJson(
+          response,
+          200,
+          dependencies.settlements
+            .list(groupId, queryLimit(url))
+            .map(serializeSettlement),
+        );
+      }
       if (request.method !== "POST") {
-        return methodNotAllowed(response, "POST");
+        return methodNotAllowed(response, "GET", "POST");
       }
       const body = await readObject(request);
       const paymentMethod = requiredString(body, "payment_method");
@@ -416,6 +442,30 @@ function serializeMember(member: Member) {
     member_id: member.memberId,
     group_id: member.groupId,
     user_id: member.userId,
+    role: member.role,
+    status: member.status,
+  };
+}
+
+/** Shared `?limit=` parsing; the services clamp out-of-range page sizes. */
+function queryLimit(url: URL): number {
+  const rawLimit = url.searchParams.get("limit");
+  if (rawLimit === null) {
+    return 50;
+  }
+  const limit = Number(rawLimit);
+  if (!Number.isInteger(limit)) {
+    throw validation("limit must be an integer");
+  }
+  return limit;
+}
+
+function serializeRosterMember(member: RosterMember) {
+  return {
+    member_id: member.memberId,
+    group_id: member.groupId,
+    user_id: member.userId,
+    display_name: member.displayName,
     role: member.role,
     status: member.status,
   };

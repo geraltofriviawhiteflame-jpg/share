@@ -149,6 +149,59 @@ export class SettlementService {
 
     return createSettlement();
   }
+
+  /** Active settlement records, newest first, for the group ledger view. */
+  public list(groupId: string, limit = 50): Settlement[] {
+    const normalizedGroupId = groupId.trim();
+    if (!normalizedGroupId) {
+      throw validation("group id is required");
+    }
+    let pageSize = limit;
+    if (!Number.isInteger(pageSize) || pageSize <= 0 || pageSize > 100) {
+      pageSize = 50;
+    }
+    const group = this.database
+      .prepare(`SELECT 1 AS value FROM groups WHERE id = ?`)
+      .get(normalizedGroupId) as { value: number } | undefined;
+    if (!group) {
+      throw notFound("group was not found");
+    }
+
+    const rows = this.database
+      .prepare(`
+        SELECT id, group_id, paid_by_member_id, received_by_member_id,
+               amount_paise, currency, settlement_date, payment_method, notes, version
+        FROM settlements
+        WHERE group_id = ? AND deleted_at IS NULL
+        ORDER BY settlement_date DESC, created_at DESC, id DESC
+        LIMIT ?
+      `)
+      .all(normalizedGroupId, pageSize) as Array<{
+      id: string;
+      group_id: string;
+      paid_by_member_id: string;
+      received_by_member_id: string;
+      amount_paise: number;
+      currency: "INR";
+      settlement_date: string;
+      payment_method: CreateSettlementInput["paymentMethod"];
+      notes: string | null;
+      version: number;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      groupId: row.group_id,
+      paidByMemberId: row.paid_by_member_id,
+      receivedByMemberId: row.received_by_member_id,
+      amountPaise: row.amount_paise,
+      currency: row.currency,
+      settlementDate: row.settlement_date,
+      paymentMethod: row.payment_method,
+      notes: row.notes ?? undefined,
+      version: row.version,
+    }));
+  }
 }
 
 function validateInput(input: CreateSettlementInput): void {

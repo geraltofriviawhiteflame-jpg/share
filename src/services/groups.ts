@@ -41,6 +41,10 @@ export interface Member {
   status: string;
 }
 
+export interface RosterMember extends Member {
+  displayName: string;
+}
+
 type MemberRow = {
   id: string;
   status: string;
@@ -243,5 +247,51 @@ export class GroupService {
     });
 
     return addMember();
+  }
+
+  /**
+   * The group roster, including members who left so historical splits stay
+   * readable. Clients use this to render payer and participant choices.
+   */
+  public listMembers(groupId: string): RosterMember[] {
+    const normalizedGroupId = groupId.trim();
+    if (!normalizedGroupId) {
+      throw validation("group id is required");
+    }
+    const group = this.database
+      .prepare(`SELECT 1 AS value FROM groups WHERE id = ?`)
+      .get(normalizedGroupId) as { value: number } | undefined;
+    if (!group) {
+      throw notFound("group was not found");
+    }
+
+    const rows = this.database
+      .prepare(`
+        SELECT gm.id AS member_id, gm.group_id, gm.user_id, gm.role, gm.status,
+               u.display_name
+        FROM group_members AS gm
+        JOIN users AS u ON u.id = gm.user_id
+        WHERE gm.group_id = ?
+        ORDER BY (gm.status = 'active') DESC,
+                 u.display_name COLLATE NOCASE,
+                 gm.id
+      `)
+      .all(normalizedGroupId) as Array<{
+      member_id: string;
+      group_id: string;
+      user_id: string;
+      role: string;
+      status: string;
+      display_name: string;
+    }>;
+
+    return rows.map((row) => ({
+      memberId: row.member_id,
+      groupId: row.group_id,
+      userId: row.user_id,
+      role: row.role,
+      status: row.status,
+      displayName: row.display_name,
+    }));
   }
 }

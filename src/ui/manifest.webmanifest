@@ -1,0 +1,19 @@
+{
+  "name": "Share — split expenses",
+  "short_name": "Share",
+  "description": "Split expenses with the people you travel and live with. Balances derived from an integer-paise ledger.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f5fa",
+  "theme_color": "#0e6b41",
+  "icons": [
+    {
+      "src": "/app/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}
