@@ -20,6 +20,7 @@ The database is implemented with raw, versioned SQLite migrations before an ORM 
 db/migrations/0001_initial.sql  Initial tables, indexes, and views
 scripts/migrate.py               Dependency-free migration runner
 tests/test_database_schema.py    Executable constraint and balance examples
+src/db/database.ts             TypeScript connection setup and checksum rules
 ```
 
 ## Create a local database

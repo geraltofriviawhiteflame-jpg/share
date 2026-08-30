@@ -87,32 +87,41 @@ All authorization checks belong in the server-side application layer. Hiding an 
 
 ## Recommended architecture
 
-The MVP should be a modular monolith:
+The MVP is a modular monolith. The current implementation uses TypeScript
+on Node.js for the backend and leaves the browser client as a later milestone:
 
 ```text
-Browser
+Browser (later)
    |
-Next.js application
-   |-- authentication and authorization
+Node.js + TypeScript HTTP API
+   |-- authentication and authorization (next milestone)
    |-- group module
    |-- expense module
    |-- settlement module
    |-- balance calculation
    `-- audit module
    |
-Drizzle ORM
-   |
-SQLite
+`-- sql.js (SQLite/WASM) + versioned SQL migrations
+       |
+      SQLite
 ```
 
 Recommended initial technologies:
 
-- Next.js, React, and TypeScript
-- Drizzle ORM and versioned SQL migrations
-- SQLite through `better-sqlite3` for local development and a single Node.js server
-- A server-managed authentication session
-- Vitest for domain and database tests
-- Playwright for important end-to-end flows
+- TypeScript on Node.js 20+, the built-in `node:http` server, and `node:test`
+- `sql.js` for a pure-JavaScript/WASM SQLite runtime in this preview; move to a native or server-side SQLite/PostgreSQL driver for production
+- The existing raw, versioned SQL migrations
+- A server-managed authentication session in the next milestone
+- TypeScript unit tests and database integration tests
+- A browser client only after the API contract and domain services are stable
+
+TypeScript is a deliberate learning choice because it gives this project
+compile-time types while remaining close to the browser and its JSON API. The
+trade-off is that Node.js is single-threaded for JavaScript execution and
+synchronous SQLite calls must remain small; this project keeps those calls in a
+small MVP process and can move to an async driver or PostgreSQL when needed.
+See the [TypeScript backend study guide](typescript-backend-study-guide.md) for
+trade-offs and interview prompts.
 
 The application does not initially need microservices, Redis, a message broker, background workers, or a separately deployed API.
 
@@ -166,7 +175,7 @@ Authentication adapters may add account, session, and verification tables. Those
 
 ## Proposed schema
 
-The definitions below describe the logical schema. Exact SQL will be generated and reviewed as a Drizzle migration during implementation.
+The definitions below describe the logical schema. The existing SQL migration is the reviewed implementation used by the TypeScript service.
 
 ### `users`
 
@@ -477,13 +486,13 @@ Additional recommendations:
 
 1. Implement and test the relational model as raw, versioned SQLite migrations.
 2. Exercise constraints, balance views, transaction boundaries, and query plans with representative SQL data.
-3. Establish the Next.js and TypeScript application and map the reviewed schema with Drizzle.
+3. Establish the TypeScript API and map the reviewed schema through `sql.js` for the preview.
 4. Add authentication-owned tables and the `users` integration.
 5. Implement groups, memberships, invitations, and server-side authorization.
 6. Implement transactional expense creation with equal and exact splits.
 7. Implement edits, soft deletion, optimistic concurrency, and activity events.
 8. Implement settlements and deterministic suggested transfers.
-9. Add responsive group, expense, and balance interfaces.
+9. Add a responsive browser client against the reviewed API contract.
 10. Add persistent deployment, backup, restoration, observability, and scale-evolution documentation.
 
 ## Acceptance criteria for the schema layer
@@ -497,7 +506,4 @@ Additional recommendations:
 - Unauthorized edits and settlements are rejected by server-side tests.
 - Every valid group's calculated balances sum to zero.
 - A member who leaves a group remains visible in historical expenses and balance calculations.
-- Invitation acceptance requires an authenticated account and cannot create duplicate membership.
-nt and cannot create duplicate membership.
-es a group remains visible in historical expenses and balance calculations.
 - Invitation acceptance requires an authenticated account and cannot create duplicate membership.
