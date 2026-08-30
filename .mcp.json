@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "share": {
+      "command": "node",
+      "args": ["mcp-server/dist/mcp-server/src/index.js"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "DATABASE_FILE": "data/mcp-share.db"
+      }
+    }
+  }
+}

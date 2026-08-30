@@ -1,0 +1,12 @@
+# Local SQLite databases
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts and dependencies
+dist/
+node_modules/
+
+# Node test artifacts
+coverage/

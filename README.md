@@ -65,6 +65,27 @@ The learning API includes `GET/POST /v1/users`, `GET/POST /v1/groups`,
 `GET /v1/groups/{group_id}/balances`, and
 `GET/POST /v1/groups/{group_id}/settlements`.
 
+## MCP server (agent access)
+
+The same backend is exposed as a Model Context Protocol server, so MCP-capable
+agents (Claude Desktop, Claude Code, Cursor, VS Code Copilot, hosted agents)
+can read and write expenses directly. It reuses the exact service layer and
+SQLite schema of the web backend — one writer per database file, see the notes
+in [mcp-server/README.md](mcp-server/README.md).
+
+```bash
+cd mcp-server
+npm install
+npm run build
+npm start        # stdio transport; set MCP_TRANSPORT=http for remote clients
+```
+
+A ready-made `.mcp.json` in the repository root lets Cursor / VS Code /
+Claude Code pick the server up automatically. It exposes 11 tools:
+`list_users`, `create_user`, `list_groups`, `create_group`, `list_members`,
+`add_member`, `list_expenses`, `create_expense`, `get_balances`,
+`list_settlements`, `create_settlement`.
+
 ## Mobile app
 
 The same server also serves a phone-sized web client at the origin root, with no
