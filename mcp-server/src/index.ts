@@ -58,6 +58,18 @@ function readPort(name: string, fallback: number): number {
   return port;
 }
 
+/**
+ * Prefer the MCP-specific override locally, but honor the standard PORT
+ * contract used by web hosts such as Render. Without this, an HTTP transport
+ * can be healthy on :8081 while the host's proxy is waiting on its PORT.
+ */
+function readHttpPort(): number {
+  if (process.env.MCP_PORT !== undefined && process.env.MCP_PORT !== "") {
+    return readPort("MCP_PORT", 8081);
+  }
+  return readPort("PORT", 8081);
+}
+
 function resolveDataFile(raw: string | undefined, fallbackName: string): string {
   if (!raw) {
     return resolve(repoRoot, "data", fallbackName);
@@ -93,7 +105,7 @@ function readOptions(): Options {
   return {
     transport: readTransport(),
     host: process.env.HOST ?? "0.0.0.0",
-    port: readPort("MCP_PORT", 8081),
+    port: readHttpPort(),
     databaseFile: resolveDataFile(process.env.DATABASE_FILE, "mcp-share.db"),
     migrationsDirectory:
       process.env.MIGRATIONS_DIRECTORY ?? resolve(repoRoot, "db", "migrations"),
