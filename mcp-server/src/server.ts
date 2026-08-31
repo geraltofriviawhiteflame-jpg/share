@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SQLiteDatabase } from "../../src/db/database";
+import { DomainError } from "../../src/domain/errors";
 import { AccountService } from "../../src/services/accounts";
 import { BalanceService } from "../../src/services/balance";
 import { ExpenseService } from "../../src/services/expenses";
@@ -17,6 +18,7 @@ import {
   serializeUser,
   textResult,
 } from "./format";
+import { Logger, createLogger, serializeError } from "./log";
 
 /** The same service composition the HTTP backend uses. */
 export interface AppDependencies {
@@ -31,6 +33,10 @@ export interface AppDependencies {
 export const SERVER_NAME = "share-mcp-server";
 export const SERVER_VERSION = "0.1.0";
 
+export interface CreateShareMcpServerOptions {
+  logger?: Logger;
+}
+
 const INSTRUCTIONS = [
   "Share is a shared-expense tracker. All monetary amounts are integer paise (1 rupee = 100 paise).",
   "Every write requires actor_member_id: the member id of the person performing the action (the member, not the user).",
@@ -39,11 +45,96 @@ const INSTRUCTIONS = [
   "The data in this server is the source of truth for the Share app; writes are immediate and durable.",
 ].join(" ");
 
+/**
+ * Wrap a tool handler so every call is timed and written to stderr (and, when
+ * the client has connected, forwarded as an MCP logging notification).
+ */
+function wrapToolHandler<Args, Result>(
+  mcp: McpServer,
+  logger: Logger,
+  name: string,
+  handler: (args: Args) => Promise<Result>,
+): (args: Args, extra?: { sessionId?: string }) => Promise<Result> {
+  return async (args, extra) => {
+    const started = Date.now();
+    logger.debug("tool.call", { tool: name, args });
+    try {
+      const result = await handler(args);
+      const durationMs = Date.now() - started;
+      const ok = !(result as { isError?: unknown } | null)?.isError;
+      logger.info("tool.done", { tool: name, duration_ms: durationMs, ok });
+      void mcp
+        .sendLoggingMessage(
+          {
+            level: ok ? "info" : "warning",
+            logger: SERVER_NAME,
+            data: { event: "tool.done", tool: name, duration_ms: durationMs, ok },
+          },
+          extra?.sessionId,
+        )
+        .catch(() => undefined);
+      return result;
+    } catch (error) {
+      const durationMs = Date.now() - started;
+      if (error instanceof DomainError) {
+        logger.warn("tool.rejected", {
+          tool: name,
+          duration_ms: durationMs,
+          kind: error.kind,
+          message: error.message,
+        });
+        void mcp
+          .sendLoggingMessage(
+            {
+              level: "warning",
+              logger: SERVER_NAME,
+              data: {
+                event: "tool.rejected",
+                tool: name,
+                duration_ms: durationMs,
+                kind: error.kind,
+                message: error.message,
+              },
+            },
+            extra?.sessionId,
+          )
+          .catch(() => undefined);
+      } else {
+        logger.error("tool.failed", {
+          tool: name,
+          duration_ms: durationMs,
+          error: serializeError(error),
+        });
+        void mcp
+          .sendLoggingMessage(
+            {
+              level: "error",
+              logger: SERVER_NAME,
+              data: {
+                event: "tool.failed",
+                tool: name,
+                duration_ms: durationMs,
+                error: serializeError(error),
+              },
+            },
+            extra?.sessionId,
+          )
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+  };
+}
+
 /** Build the MCP server over the existing Share backend services. */
-export function createShareMcpServer(dependencies: AppDependencies): McpServer {
+export function createShareMcpServer(
+  dependencies: AppDependencies,
+  options: CreateShareMcpServerOptions = {},
+): McpServer {
+  const logger = options.logger ?? createLogger({ name: SERVER_NAME });
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: INSTRUCTIONS },
+    { instructions: INSTRUCTIONS, capabilities: { logging: {} } },
   );
 
   server.registerTool(
@@ -54,10 +145,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         "List all people registered in the Share app. Use this to find a user id before creating a group.",
       inputSchema: {},
     },
-    async () => {
+    wrapToolHandler(server, logger, "list_users", async () => {
       const users = dependencies.accounts.listUsers();
       return textResult(users.map(serializeUser));
-    },
+    }),
   );
 
   server.registerTool(
@@ -75,14 +166,14 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("IANA timezone, defaults to Asia/Kolkata"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "create_user", async (args) => {
       const user = dependencies.accounts.createUser({
         email: args.email,
         displayName: args.display_name,
         timezone: args.timezone,
       });
       return textResult(serializeUser(user));
-    },
+    }),
   );
 
   server.registerTool(
@@ -95,10 +186,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         user_id: z.string().describe("User id returned by list_users"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "list_groups", async (args) => {
       const groups = dependencies.groups.listForUser(args.user_id);
       return textResult(groups.map(serializeMembershipGroup));
-    },
+    }),
   );
 
   server.registerTool(
@@ -117,7 +208,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("Minimize the number of suggested transfers; defaults to true"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "create_group", async (args) => {
       const group = dependencies.groups.create({
         ownerUserId: args.owner_user_id,
         name: args.name,
@@ -125,7 +216,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         simplifyDebts: args.simplify_debts,
       });
       return textResult(serializeGroup(group));
-    },
+    }),
   );
 
   server.registerTool(
@@ -138,10 +229,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         group_id: z.string().describe("Group id returned by create_group or list_groups"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "list_members", async (args) => {
       const members = dependencies.groups.listMembers(args.group_id);
       return textResult(members.map(serializeRosterMember));
-    },
+    }),
   );
 
   server.registerTool(
@@ -162,7 +253,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("Role of the new member; defaults to 'member'"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "add_member", async (args) => {
       const member = dependencies.groups.addMember({
         groupId: args.group_id,
         actorMemberId: args.actor_member_id,
@@ -170,7 +261,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         role: args.role,
       });
       return textResult(serializeMember(member));
-    },
+    }),
   );
 
   server.registerTool(
@@ -190,10 +281,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("Maximum number of expenses to return; defaults to 50"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "list_expenses", async (args) => {
       const expenses = dependencies.expenses.list(args.group_id, args.limit ?? 50);
       return textResult(expenses.map(serializeExpense));
-    },
+    }),
   );
 
   server.registerTool(
@@ -231,7 +322,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("Required when split_method is 'exact'; must sum to amount_paise"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "create_expense", async (args) => {
       const expense = dependencies.expenses.create({
         groupId: args.group_id,
         actorMemberId: args.actor_member_id,
@@ -249,7 +340,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         })),
       });
       return textResult(serializeExpense(expense));
-    },
+    }),
   );
 
   server.registerTool(
@@ -262,10 +353,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         group_id: z.string(),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "get_balances", async (args) => {
       const result = dependencies.balances.forGroup(args.group_id);
       return textResult(serializeBalanceResult(result));
-    },
+    }),
   );
 
   server.registerTool(
@@ -285,10 +376,10 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
           .describe("Maximum number of settlements to return; defaults to 50"),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "list_settlements", async (args) => {
       const settlements = dependencies.settlements.list(args.group_id, args.limit ?? 50);
       return textResult(settlements.map(serializeSettlement));
-    },
+    }),
   );
 
   server.registerTool(
@@ -312,7 +403,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         notes: z.string().optional(),
       },
     },
-    async (args) => {
+    wrapToolHandler(server, logger, "create_settlement", async (args) => {
       const settlement = dependencies.settlements.create({
         groupId: args.group_id,
         actorMemberId: args.actor_member_id,
@@ -324,7 +415,7 @@ export function createShareMcpServer(dependencies: AppDependencies): McpServer {
         notes: args.notes,
       });
       return textResult(serializeSettlement(settlement));
-    },
+    }),
   );
 
   return server;

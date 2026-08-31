@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
@@ -12,6 +13,7 @@ import { BalanceService } from "../../src/services/balance";
 import { ExpenseService } from "../../src/services/expenses";
 import { GroupService } from "../../src/services/groups";
 import { SettlementService } from "../../src/services/settlements";
+import { createLogger, serializeError, type Logger } from "./log";
 import {
   AppDependencies,
   SERVER_NAME,
@@ -76,15 +78,20 @@ export interface Options {
   migrationsDirectory: string;
 }
 
-function readOptions(): Options {
-  const transportRaw = (process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();
+function readTransport(): "stdio" | "http" | "sse" {
+  const fromArg = process.argv.slice(2).find((arg) => !arg.startsWith("-"));
+  const transportRaw = (fromArg ?? process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();
   if (transportRaw !== "stdio" && transportRaw !== "http" && transportRaw !== "sse") {
     throw new Error(
       `MCP_TRANSPORT must be one of "stdio", "http", "sse"; got "${transportRaw}"`,
     );
   }
+  return transportRaw;
+}
+
+function readOptions(): Options {
   return {
-    transport: transportRaw,
+    transport: readTransport(),
     host: process.env.HOST ?? "0.0.0.0",
     port: readPort("MCP_PORT", 8081),
     databaseFile: resolveDataFile(process.env.DATABASE_FILE, "mcp-share.db"),
@@ -99,9 +106,10 @@ interface App {
 }
 
 /** One shared database + service layer; every connection gets its own MCP server. */
-async function createApp(options: Options): Promise<App> {
+async function createApp(options: Options, logger: Logger): Promise<App> {
   const database = await openDatabase(options.databaseFile);
   applyMigrations(database, options.migrationsDirectory);
+  logger.info("database.ready", { file: options.databaseFile });
   return {
     services: {
       database,
@@ -115,13 +123,18 @@ async function createApp(options: Options): Promise<App> {
   };
 }
 
-async function runStdio(app: App, options: Options): Promise<void> {
-  const server = createShareMcpServer(app.services);
+function newMcpServer(app: App, logger: Logger): McpServer {
+  return createShareMcpServer(app.services, { logger });
+}
+
+async function runStdio(app: App, options: Options, logger: Logger): Promise<void> {
+  const server = newMcpServer(app, logger);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(
-    `${SERVER_NAME} v${SERVER_VERSION} (stdio) ready; database: ${options.databaseFile}`,
-  );
+  logger.info("transport.ready", {
+    transport: "stdio",
+    database: options.databaseFile,
+  });
 }
 
 const corsHeaders: Record<string, string> = {
@@ -136,6 +149,35 @@ function writeCors(response: ServerResponse): void {
   for (const [name, value] of Object.entries(corsHeaders)) {
     response.setHeader(name, value);
   }
+}
+
+function attachRequestLog(
+  logger: Logger,
+  request: IncomingMessage,
+  response: ServerResponse,
+): string {
+  const requestId = request.headers["x-request-id"]?.toString() || randomUUID();
+  response.setHeader("X-Request-ID", requestId);
+  const started = Date.now();
+  const path = (request.url ?? "/").split("?")[0] || "/";
+  const sessionId = request.headers["mcp-session-id"]?.toString();
+  response.on("finish", () => {
+    const quiet = request.method === "OPTIONS" || path === "/healthz";
+    const fields = {
+      request_id: requestId,
+      method: request.method ?? "GET",
+      path,
+      status: response.statusCode,
+      duration_ms: Date.now() - started,
+      ...(sessionId ? { session_id: sessionId } : {}),
+    };
+    if (quiet) {
+      logger.debug("http.request", fields);
+    } else {
+      logger.info("http.request", fields);
+    }
+  });
+  return requestId;
 }
 
 function landingPage(options: Options): string {
@@ -166,10 +208,12 @@ function landingPage(options: Options): string {
 </html>`;
 }
 
-async function runHttp(app: App, options: Options): Promise<void> {
+async function runHttp(app: App, options: Options, logger: Logger): Promise<void> {
   const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: McpServer }>();
+  const httpLog = logger.child({ transport: "http" });
 
   const server = createServer(async (request, response) => {
+    attachRequestLog(httpLog, request, response);
     const url = new URL(request.url ?? "/", "http://localhost");
 
     if (request.method === "OPTIONS") {
@@ -213,22 +257,24 @@ async function runHttp(app: App, options: Options): Promise<void> {
 
     // New session: a POST without a session id must be an initialize request.
     if (!sessionId && request.method === "POST") {
-      const server = createShareMcpServer(app.services);
+      const mcp = newMcpServer(app, httpLog);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: (id) => {
-          sessions.set(id, { transport, server });
+          sessions.set(id, { transport, server: mcp });
+          httpLog.info("session.opened", { session_id: id });
         },
       });
       transport.onclose = () => {
         const id = transport.sessionId;
         if (id) {
           sessions.delete(id);
+          httpLog.info("session.closed", { session_id: id });
         }
-        void server.close().catch(() => undefined);
+        void mcp.close().catch(() => undefined);
       };
-      await server.connect(transport);
+      await mcp.connect(transport);
       await transport.handleRequest(request, response);
       return;
     }
@@ -257,6 +303,10 @@ async function runHttp(app: App, options: Options): Promise<void> {
     try {
       await transport.handleRequest(request, response);
     } catch (error) {
+      httpLog.error("http.mcp_error", {
+        session_id: sessionId,
+        error: serializeError(error),
+      });
       if (!response.headersSent) {
         writeCors(response);
         response.statusCode = 500;
@@ -274,14 +324,19 @@ async function runHttp(app: App, options: Options): Promise<void> {
     }
   });
 
+  server.on("error", (error) => {
+    httpLog.error("http.failed", { error: serializeError(error) });
+  });
+
   server.listen(options.port, options.host, () => {
-    console.log(
-      `${SERVER_NAME} v${SERVER_VERSION} (streamable HTTP) listening on http://${options.host}:${options.port}/mcp`,
-    );
+    httpLog.info("http.listening", {
+      url: `http://${options.host}:${options.port}/mcp`,
+      database: options.databaseFile,
+    });
   });
 
   async function shutdown(signal: string): Promise<void> {
-    console.log(`${signal} received; shutting down`);
+    httpLog.info("server.shutdown", { signal, sessions: sessions.size });
     for (const entry of sessions.values()) {
       await entry.transport.close().catch(() => undefined);
       await entry.server.close().catch(() => undefined);
@@ -295,10 +350,12 @@ async function runHttp(app: App, options: Options): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-async function runSse(app: App, options: Options): Promise<void> {
+async function runSse(app: App, options: Options, logger: Logger): Promise<void> {
   const sessions = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
+  const sseLog = logger.child({ transport: "sse" });
 
   const server = createServer(async (request, response) => {
+    attachRequestLog(sseLog, request, response);
     const url = new URL(request.url ?? "/", "http://localhost");
 
     if (request.method === "OPTIONS") {
@@ -318,14 +375,16 @@ async function runSse(app: App, options: Options): Promise<void> {
     }
 
     if (request.method === "GET" && url.pathname === "/mcp") {
-      const server = createShareMcpServer(app.services);
+      const mcp = newMcpServer(app, sseLog);
       const transport = new SSEServerTransport("/mcp/message", response);
-      sessions.set(transport.sessionId, { transport, server });
+      sessions.set(transport.sessionId, { transport, server: mcp });
+      sseLog.info("session.opened", { session_id: transport.sessionId });
       response.on("close", () => {
         sessions.delete(transport.sessionId);
-        void server.close().catch(() => undefined);
+        sseLog.info("session.closed", { session_id: transport.sessionId });
+        void mcp.close().catch(() => undefined);
       });
-      await server.connect(transport);
+      await mcp.connect(transport);
       return;
     }
 
@@ -345,14 +404,19 @@ async function runSse(app: App, options: Options): Promise<void> {
     response.end("not found\n");
   });
 
+  server.on("error", (error) => {
+    sseLog.error("http.failed", { error: serializeError(error) });
+  });
+
   server.listen(options.port, options.host, () => {
-    console.log(
-      `${SERVER_NAME} v${SERVER_VERSION} (SSE) listening on http://${options.host}:${options.port}/mcp`,
-    );
+    sseLog.info("http.listening", {
+      url: `http://${options.host}:${options.port}/mcp`,
+      database: options.databaseFile,
+    });
   });
 
   async function shutdown(signal: string): Promise<void> {
-    console.log(`${signal} received; shutting down`);
+    sseLog.info("server.shutdown", { signal, sessions: sessions.size });
     for (const entry of sessions.values()) {
       await entry.transport.close().catch(() => undefined);
       await entry.server.close().catch(() => undefined);
@@ -367,21 +431,29 @@ async function runSse(app: App, options: Options): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const logger = createLogger({ name: SERVER_NAME });
   const options = readOptions();
-  const app = await createApp(options);
-  console.error(
-    `${SERVER_NAME} v${SERVER_VERSION} starting; transport=${options.transport} database=${options.databaseFile}`,
-  );
+  logger.info("server.starting", {
+    version: SERVER_VERSION,
+    transport: options.transport,
+    database: options.databaseFile,
+    ...(options.transport === "stdio"
+      ? {}
+      : { host: options.host, port: options.port }),
+  });
+  const app = await createApp(options, logger);
   if (options.transport === "stdio") {
-    await runStdio(app, options);
+    await runStdio(app, options, logger);
   } else if (options.transport === "http") {
-    await runHttp(app, options);
+    await runHttp(app, options, logger);
   } else {
-    await runSse(app, options);
+    await runSse(app, options, logger);
   }
 }
 
 main().catch((error: unknown) => {
-  console.error(error);
+  createLogger({ name: SERVER_NAME }).error("server.fatal", {
+    error: serializeError(error),
+  });
   process.exitCode = 1;
 });

@@ -5,7 +5,9 @@
       "args": ["mcp-server/dist/mcp-server/src/index.js"],
       "env": {
         "MCP_TRANSPORT": "stdio",
-        "DATABASE_FILE": "data/mcp-share.db"
+        "DATABASE_FILE": "data/mcp-share.db",
+        "LOG_LEVEL": "info",
+        "LOG_FORMAT": "json"
       }
     }
   }

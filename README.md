@@ -77,8 +77,13 @@ in [mcp-server/README.md](mcp-server/README.md).
 cd mcp-server
 npm install
 npm run build
-npm start        # stdio transport; set MCP_TRANSPORT=http for remote clients
+npm start             # stdio transport
+npm run start:http    # streamable HTTP on :8081
 ```
+
+From the repository root you can also run `npm run mcp:build`, `npm run mcp:start`,
+`npm run mcp:start:http`, and `npm run mcp:test`. Logs go to stderr (`LOG_LEVEL`,
+`LOG_FORMAT`); stdout is reserved for JSON-RPC when using stdio.
 
 A ready-made `.mcp.json` in the repository root lets Cursor / VS Code /
 Claude Code pick the server up automatically. It exposes 11 tools:
