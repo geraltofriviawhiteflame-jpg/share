@@ -83,7 +83,10 @@ npm run start:http    # streamable HTTP on :8081
 
 From the repository root you can also run `npm run mcp:build`, `npm run mcp:start`,
 `npm run mcp:start:http`, and `npm run mcp:test`. Logs go to stderr (`LOG_LEVEL`,
-`LOG_FORMAT`); stdout is reserved for JSON-RPC when using stdio.
+`LOG_FORMAT`); stdout is reserved for JSON-RPC when using stdio. To deploy this
+MCP endpoint as a Render Web Service, use the included `render.yaml` (or set
+its Start Command to `npm --prefix mcp-server run start:http` and health check
+path to `/healthz`); see the [MCP deployment guide](mcp-server/README.md#deploy-on-render).
 
 A ready-made `.mcp.json` in the repository root lets Cursor / VS Code /
 Claude Code pick the server up automatically. It exposes 11 tools:

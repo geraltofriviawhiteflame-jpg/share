@@ -1,0 +1,10 @@
+# Deploy with Render's Blueprint flow. The MCP server's normal `npm start`
+# command is stdio-only for local desktop clients, so this explicitly starts
+# the streamable HTTP transport for a Render Web Service.
+services:
+  - type: web
+    name: share-mcp-server
+    runtime: node
+    buildCommand: npm ci && npm --prefix mcp-server ci && npm --prefix mcp-server run build
+    startCommand: npm --prefix mcp-server run start:http
+    healthCheckPath: /healthz

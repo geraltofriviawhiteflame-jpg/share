@@ -43,15 +43,16 @@ Point any MCP client at the command `node /path/to/share/mcp-server/dist/mcp-ser
 
 Environment variables:
 
-| Variable                  | Default                      | Notes                                      |
-| ------------------------- | ---------------------------- | ------------------------------------------ |
-| `MCP_TRANSPORT`           | `stdio`                      | `stdio`, `http`, or `sse`                  |
-| `MCP_PORT`                | `8081`                       | HTTP/SSE listening port                    |
-| `HOST`                    | `0.0.0.0`                    | HTTP/SSE bind address                      |
-| `DATABASE_FILE`           | `<repo>/data/mcp-share.db`   | SQLite file; `:memory:` for a throwaway DB |
-| `MIGRATIONS_DIRECTORY`    | `<repo>/db/migrations`       | Override only for testing                  |
-| `LOG_LEVEL`               | `info`                       | `debug`, `info`, `warn`, or `error`        |
-| `LOG_FORMAT`              | pretty on a TTY, else `json` | `json` or `pretty`; always written to stderr |
+| Variable                  | Default                         | Notes                                                        |
+| ------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `MCP_TRANSPORT`           | `stdio`                         | `stdio`, `http`, or `sse`                                    |
+| `MCP_PORT`                | `PORT`, then `8081`             | Optional explicit HTTP/SSE listening-port override           |
+| `PORT`                    | `8081` when `MCP_PORT` is unset | Standard web-host port; Render sets this automatically       |
+| `HOST`                    | `0.0.0.0`                       | HTTP/SSE bind address                                        |
+| `DATABASE_FILE`           | `<repo>/data/mcp-share.db`      | SQLite file; `:memory:` for a throwaway DB                   |
+| `MIGRATIONS_DIRECTORY`    | `<repo>/db/migrations`          | Override only for testing                                    |
+| `LOG_LEVEL`               | `info`                          | `debug`, `info`, `warn`, or `error`                          |
+| `LOG_FORMAT`              | pretty on a TTY, else `json`    | `json` or `pretty`; always written to stderr                 |
 
 Logs never go to stdout (stdio JSON-RPC owns that stream). Each line is a
 structured record: server start, database open, HTTP requests, session
@@ -148,6 +149,46 @@ then connect to `http://<host>:8081/mcp`. A landing page with the tool list and
 a health check live at `http://<host>:8081/` and `/healthz`. Sessions are
 stateful per the Streamable HTTP spec (`Mcp-Session-Id` header), with CORS
 enabled for browser-based clients.
+
+## Deploy on Render
+
+A Render **Web Service** must keep an HTTP listener open on the `PORT` that
+Render provides. The default `npm start` command deliberately uses MCP's
+`stdio` transport for local MCP clients, so it exits immediately on Render
+because Render does not provide a connected stdin stream.
+
+For an existing Render service whose repository root is this repository, use:
+
+| Render setting | Value |
+| --- | --- |
+| Build Command | `npm ci && npm --prefix mcp-server ci && npm --prefix mcp-server run build` |
+| Start Command | `npm --prefix mcp-server run start:http` |
+| Health Check Path | `/healthz` |
+
+The `start:http` command selects the streamable HTTP transport. It now binds to
+Render's `PORT` automatically (or to `MCP_PORT` when you explicitly set one),
+and listens on `0.0.0.0`. Do **not** set `MCP_TRANSPORT=stdio` for this service.
+After deployment, give remote MCP clients:
+
+```text
+https://<your-render-service>.onrender.com/mcp
+```
+
+A ready-to-use [`render.yaml`](../render.yaml) is included for new Blueprint
+deployments. For data that must survive deploys and instance replacement,
+create a Render persistent disk, mount it at `/var/data`, and set
+`DATABASE_FILE=/var/data/mcp-share.db`. Keep this as a single running instance:
+the SQL.js-backed SQLite file has one writer and is not safe to share between
+multiple service instances.
+
+> **Security:** the current MCP HTTP endpoint has no authentication. Do not
+> expose real financial or personal data on a public URL until an authentication
+> layer (for example, an authenticated reverse proxy) is in place.
+
+> **Immediate workaround for the currently deployed revision:** its port
+> resolver predates `PORT` support. Change that service's Start Command to
+> `cd mcp-server && MCP_TRANSPORT=http MCP_PORT=$PORT npm start`. Once this
+> change is deployed, replace it with the cleaner Start Command in the table.
 
 ## How it works
 
